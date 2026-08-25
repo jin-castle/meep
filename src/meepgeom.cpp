@@ -1428,8 +1428,22 @@ void geom_epsilon::fallback_chi1inv_row(meep::component c, double chi1inv_row[3]
   get_material_pt(material, v.center());
   material_epsmu(meep::type(c), material, &chi1p1, &chi1p1_inv);
   material_gc(material);
+  /* Interface-distance test: under the same linear voxel model the quadrature
+     below uses, the eta level set crosses this voxel only if
+     |uval - eta| < |grad u| * rad. tanh saturates to +-1 in double precision
+     once |beta * (u - eta)| exceeds ~19, so when the whole voxel sits at
+     least that far on one side of eta, u_proj is constant over the voxel to
+     machine precision and the average *is* the pointwise material -- skip the
+     quadrature. Written as a saturation width rather than a hard |d| < rad
+     cut so that no discontinuity is introduced at finite beta; at beta = inf
+     it reduces to |uval - eta| > |grad u| * rad exactly, and beta = 0 (a
+     graded medium with no level-set interface) keeps the full average. */
+  bool no_interface_in_voxel =
+      md->which_subclass == material_data::MATERIAL_GRID && md->beta > 0 &&
+      fabs(uval - md->eta) - meep::abs(gradient) * (v.diameter() / 2) > 20 / md->beta;
   if (chi1p1.m01 != 0 || chi1p1.m02 != 0 || chi1p1.m12 != 0 || chi1p1.m00 != chi1p1.m11 ||
-      chi1p1.m11 != chi1p1.m22 || chi1p1.m00 != chi1p1.m22 || meep::abs(gradient) < 1e-8) {
+      chi1p1.m11 != chi1p1.m22 || chi1p1.m00 != chi1p1.m22 || meep::abs(gradient) < 1e-8 ||
+      no_interface_in_voxel) {
     int rownum = meep::component_direction(c) % 3;
     if (rownum == 0) {
       chi1inv_row[0] = chi1p1_inv.m00;
