@@ -174,31 +174,45 @@ class TestObjectBoundarySmoothing(unittest.TestCase):
 
         Those are averaged against a filling fraction of 1, which would return
         the unsmoothed material and silently disable level-set smoothing for the
-        whole design region.
+        whole design region.  A projected (beta=inf) ramp keeps a genuine
+        level-set interface in the interior, so smoothing must change the
+        epsilon there.  An unprojected (beta=0) ramp is a graded medium with no
+        interface anywhere, so the same average must reduce to (nearly) the
+        pointwise epsilon -- the binary harmonic mix used to keep an O(1)
+        anisotropic correction alive there with no interface in the voxel.
+
+        The ramp runs diagonally: for an axis-aligned linear ramp the voxel
+        windows [uval - g*rad, uval + g*rad] tile the u axis exactly (2*rad is
+        the pixel size), so at most one column per component straddles the
+        interface and the on/off signal is an alignment accident.  An oblique
+        interface straddles many voxels regardless of alignment.
         """
         n = 8
-        ramp = np.repeat(np.linspace(0.0, 1.0, n)[:, None], n, axis=1)[:, :, None]
-        profiles = []
-        for do_averaging in (False, True):
-            grid = mp.MaterialGrid(
-                mp.Vector3(n, n, 1),
-                mp.Medium(index=1.0),
-                mp.Medium(index=3.48),
-                weights=ramp,
-                do_averaging=do_averaging,
-                beta=0,
-            )
-            sim = _boundary_sim(grid)
-            profiles.append(
-                np.asarray(
+        ii, jj = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
+        ramp = ((ii + jj) / (2.0 * (n - 1)))[:, :, None]
+        eps = {}
+        for beta in (np.inf, 0):
+            for do_averaging in (False, True):
+                grid = mp.MaterialGrid(
+                    mp.Vector3(n, n, 1),
+                    mp.Medium(index=1.0),
+                    mp.Medium(index=3.48),
+                    weights=ramp,
+                    do_averaging=do_averaging,
+                    beta=beta,
+                )
+                sim = _boundary_sim(grid)
+                eps[(beta, do_averaging)] = np.asarray(
                     sim.get_array(
                         component=mp.Dielectric,
                         center=mp.Vector3(),
-                        size=mp.Vector3(0.8, 0, 0),
+                        size=mp.Vector3(0.8, 0.8, 0),
                     )
                 )
-            )
-        self.assertGreater(float(np.max(np.abs(profiles[1] - profiles[0]))), 1.0)
+        diff_interface = float(np.max(np.abs(eps[(np.inf, True)] - eps[(np.inf, False)])))
+        diff_graded = float(np.max(np.abs(eps[(0, True)] - eps[(0, False)])))
+        self.assertGreater(diff_interface, 1.0)
+        self.assertLess(diff_graded, 0.1)
 
 
 _ANISO_1 = mp.Vector3(2.0, 3.0, 4.0)

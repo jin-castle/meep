@@ -1283,8 +1283,13 @@ struct matgrid_volavg {
 };
 
 static void get_uproj_w(const matgrid_volavg *mgva, double x0, double &u_proj, double &w) {
-  // use a linear approximation for the material grid weights around the Yee grid point
+  // use a linear approximation for the material grid weights around the Yee grid
+  // point, saturated to the weights' range [0,1]: the extrapolation can leave it
+  // (a steep transition next to a saturated node), and while the interpolated
+  // weight itself never does, an out-of-range weight extrapolates epsilon
+  // through zero -- where the harmonic integrand below has a pole.
   u_proj = tanh_projection(mgva->uval + mgva->ugrad_abs * x0, mgva->beta, mgva->eta);
+  u_proj = u_proj < 0 ? 0 : (u_proj > 1 ? 1 : u_proj);
   if (mgva->dim == meep::D1)
     w = 1 / (2 * mgva->rad);
   else if (mgva->dim == meep::D2 || mgva->dim == meep::Dcyl)
@@ -1298,6 +1303,18 @@ static void get_uproj_w(const matgrid_volavg *mgva, double x0, double &u_proj, d
         (4.0 / 3.0 * meep::pi * mgva->rad * mgva->rad * mgva->rad);
 }
 
+/* The harmonic term must integrate 1/eps of the same graded medium the
+   pointwise path assembles, eps(x) = (1-u_proj)*eps1 + u_proj*eps2 -- not the
+   binary-mixture form (1-u_proj)/eps1 + u_proj/eps2, which agrees only where
+   u_proj is 0 or 1. The two differ by the arithmetic-harmonic gap wherever
+   u_proj is intermediate, and that gap kept the anisotropic correction
+   (minveps - 1/meps) finite as |grad u| -> 0, so chi1inv jumped between the
+   |grad u| < 1e-8 branch and this one. With beta = 0 (weights projected
+   upstream, e.g. SSP) intermediate u_proj is the norm and the jump made the
+   assembled epsilon discontinuous in the weights, breaking the adjoint
+   gradient. Integrating 1/eps(x) makes minveps -> 1/meps in that limit, so
+   the anisotropy vanishes continuously; for projected (binary) u_proj it is
+   unchanged. */
 #ifdef CTL_HAS_COMPLEX_INTEGRATION
 static cnumber matgrid_ceps_func(int n, number *x, void *mgva_) {
   (void)n; // unused
@@ -1306,7 +1323,7 @@ static cnumber matgrid_ceps_func(int n, number *x, void *mgva_) {
   get_uproj_w(mgva, x[0], u_proj, w);
   cnumber ret;
   ret.re = (1 - u_proj) * mgva->eps1 + u_proj * mgva->eps2;
-  ret.im = (1 - u_proj) / mgva->eps1 + u_proj / mgva->eps2;
+  ret.im = 1 / ret.re;
   return ret * w;
 }
 #else
@@ -1322,7 +1339,7 @@ static number matgrid_inveps_func(int n, number *x, void *mgva_) {
   double u_proj = 0, w = 0;
   matgrid_volavg *mgva = (matgrid_volavg *)mgva_;
   get_uproj_w(mgva, x[0], u_proj, w);
-  return w * ((1 - u_proj) / mgva->eps1 + u_proj / mgva->eps2);
+  return w / ((1 - u_proj) * mgva->eps1 + u_proj * mgva->eps2);
 }
 #endif
 
