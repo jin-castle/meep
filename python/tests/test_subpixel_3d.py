@@ -209,7 +209,9 @@ class TestObjectBoundarySmoothing(unittest.TestCase):
                         size=mp.Vector3(0.8, 0.8, 0),
                     )
                 )
-        diff_interface = float(np.max(np.abs(eps[(np.inf, True)] - eps[(np.inf, False)])))
+        diff_interface = float(
+            np.max(np.abs(eps[(np.inf, True)] - eps[(np.inf, False)]))
+        )
         diff_graded = float(np.max(np.abs(eps[(0, True)] - eps[(0, False)])))
         self.assertGreater(diff_interface, 1.0)
         self.assertLess(diff_graded, 0.1)
